@@ -1,0 +1,28 @@
+{
+  "rules": {
+    ".read": true,
+    ".write": true,
+    "sensorData": {
+      "$userId": {
+        "history": {
+          ".indexOn": ["timestamp"]
+        }
+      }
+    },
+    "alerts": {
+      "$userId": {
+        ".indexOn": ["timestamp"]
+      }
+    },
+    "health_scans": {
+      "$userId": {
+        ".indexOn": ["timestamp"]
+      }
+    },
+    "ai_queries": {
+      "$userId": {
+        ".indexOn": ["timestamp"]
+      }
+    }
+  }
+}
