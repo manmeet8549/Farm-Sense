@@ -1,252 +1,170 @@
 /*
  * ═══════════════════════════════════════════════════════════════
- * FarmSense AI — ESP32 Sensor Module
- * ═══════════════════════════════════════════════════════════════
- * 
- * Hardware Required:
- *   - ESP32 DevKit
- *   - DHT22 (Temperature + Humidity sensor) — Pin D4
- *   - Capacitive Soil Moisture Sensor v1.2 — Pin D34 (ADC)
- *   - Relay Module (for water pump) — Pin D26
- *   - LED indicator — Pin D2 (onboard)
- * 
- * Wiring:
- *   DHT22:  VCC → 3.3V, GND → GND, DATA → GPIO4
- *   Soil:   VCC → 3.3V, GND → GND, AOUT → GPIO34
- *   Relay:  VCC → 5V,   GND → GND, IN   → GPIO26
- *   
- * Firebase DB URL: https://farmsense-580c0-default-rtdb.firebaseio.com
+ * FarmSense AI — Professional Firmware (v3.4 MANUAL SWITCH)
  * ═══════════════════════════════════════════════════════════════
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <SPI.h>
 #include "DHT.h"
 
-// ═══════════════════════════════════════════
-// CONFIGURATION — Edit these values
-// ═══════════════════════════════════════════
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-
-// Firebase Realtime Database
+// --- CONFIG ---
+const char* WIFI_SSID     = "Shinchan_4G";
+const char* WIFI_PASSWORD = "manmeet8549";
 const char* FIREBASE_HOST = "https://farmsense-580c0-default-rtdb.firebaseio.com";
-const char* USER_ID       = "user_001";
+const char* DEVICE_CODE   = "1234";
 
-// Sensor Pins
-#define DHT_PIN          4
-#define DHT_TYPE         DHT22
-#define SOIL_SENSOR_PIN  34   // Analog pin
-#define RELAY_PIN        26   // Pump relay
-#define LED_PIN          2    // Onboard LED
+// --- PINS ---
+#define DHT_PIN 4
+#define SOIL_PIN 34
+#define RELAY_PIN 26
+#define LED_PIN 2
+#define SWITCH_PIN 27  // Manual SPDT Switch
 
-// Timing
-#define SENSOR_INTERVAL  30000   // Read sensors every 30 seconds
-#define PUMP_CHECK_INTERVAL 5000 // Check pump command every 5 seconds
+// OLED SPI
+#define OLED_MOSI 23
+#define OLED_CLK 18
+#define OLED_DC 17
+#define OLED_CS 5
+#define OLED_RESET 16
 
-// Soil moisture calibration (adjust based on your sensor)
-#define SOIL_DRY_VALUE   4095   // ADC reading when completely dry
-#define SOIL_WET_VALUE   1500   // ADC reading when submerged in water
+DHT dht(DHT_PIN, DHT11);
+Adafruit_SSD1306 display(128, 64, &SPI, OLED_DC, OLED_RESET, OLED_CS);
 
-// ═══════════════════════════════════════════
-// GLOBALS
-// ═══════════════════════════════════════════
-DHT dht(DHT_PIN, DHT_TYPE);
+// --- STATE ---
+float t = 0, h = 0;
+int moist = 0;
+bool pumpOn = false, manualMode = false;
+unsigned long lastRelay = 0, lastWiFiRetry = 0, lastSync = 0, lastSensor = 0, lastDash = 0, lastUI = 0;
+String mode = "AUTO";
 
-unsigned long lastSensorRead = 0;
-unsigned long lastPumpCheck  = 0;
-bool pumpOn = false;
-
-// ═══════════════════════════════════════════
-// SETUP
-// ═══════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n🌱 FarmSense AI — ESP32 Starting...");
-  
-  // Pin modes
-  pinMode(RELAY_PIN, OUTPUT);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);  // Pump OFF initially
-  digitalWrite(LED_PIN, LOW);
-  
-  // Initialize DHT sensor
-  dht.begin();
-  
-  // Connect to WiFi
-  connectWiFi();
-  
-  Serial.println("✅ FarmSense ESP32 ready!\n");
+  pinMode(RELAY_PIN, OUTPUT); pinMode(LED_PIN, OUTPUT); pinMode(SWITCH_PIN, INPUT_PULLUP);
+  setRelay(false); dht.begin();
+  if(!display.begin(SSD1306_SWITCHCAPVCC)) Serial.println("OLED Fail");
+  display.clearDisplay(); display.setTextColor(WHITE);
+  display.setTextSize(2); display.setCursor(10, 20); display.println("FarmSense"); display.display();
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
-// ═══════════════════════════════════════════
-// MAIN LOOP
-// ═══════════════════════════════════════════
 void loop() {
   unsigned long now = millis();
+  manageWiFi(now);
+  if (now - lastSensor >= 10000) { lastSensor = now; readSenses(); }
+  if (now - lastSync >= 5000) { lastSync = now; sync(now); }
+  if (now - lastDash >= 2000) { lastDash = now; printDash(); }
   
-  // Ensure WiFi is connected
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
-  }
-  
-  // Read and upload sensor data periodically
-  if (now - lastSensorRead >= SENSOR_INTERVAL) {
-    lastSensorRead = now;
-    readAndUploadSensors();
-  }
-  
-  // Check pump status from Firebase
-  if (now - lastPumpCheck >= PUMP_CHECK_INTERVAL) {
-    lastPumpCheck = now;
-    checkPumpStatus();
-  }
-  
-  delay(100);
+  handleSwitch();
+  if (now - lastUI >= 50) { lastUI = now; updateUI(); }
 }
 
-// ═══════════════════════════════════════════
-// WiFi Connection
-// ═══════════════════════════════════════════
-void connectWiFi() {
-  Serial.print("📶 Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
-  
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Blink LED
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ WiFi connected!");
-    Serial.print("   IP: ");
-    Serial.println(WiFi.localIP());
-    digitalWrite(LED_PIN, HIGH); // Solid LED = connected
-  } else {
-    Serial.println("\n❌ WiFi connection failed! Retrying in 5s...");
-    digitalWrite(LED_PIN, LOW);
-    delay(5000);
+void manageWiFi(unsigned long now) {
+  if (WiFi.status() == WL_CONNECTED) digitalWrite(LED_PIN, HIGH);
+  else { digitalWrite(LED_PIN, LOW); if (now - lastWiFiRetry >= 10000) { WiFi.begin(WIFI_SSID, WIFI_PASSWORD); lastWiFiRetry = now; } }
+}
+
+void printDash() {
+  Serial.println("\n----------------------------------------");
+  Serial.printf(" Moist: %d%% | Temp: %.1fC\n Pump:  %s | Mode: %s\n", moist, t, pumpOn ? "ON" : "OFF", manualMode ? "MANUAL" : mode.c_str());
+}
+
+void handleSwitch() {
+  static bool lastSw = -1;
+  bool sw = digitalRead(SWITCH_PIN); // LOW = ON (Pullup)
+  if (sw != lastSw) {
+    lastSw = sw;
+    manualMode = true;
+    setPump(sw == LOW);
   }
 }
 
-// ═══════════════════════════════════════════
-// Read Sensors & Upload to Firebase
-// ═══════════════════════════════════════════
-void readAndUploadSensors() {
-  // Read DHT22
-  float temperature = dht.readTemperature();
-  float humidity    = dht.readHumidity();
+void updateUI() {
+  display.clearDisplay();
+  display.setTextSize(1); display.setCursor(0, 0);
+  display.println("FARMSENSE AI MONITOR");
+  display.drawLine(0, 10, 128, 10, WHITE);
+
+  display.setCursor(0, 18); display.println("SOIL MOISTURE:");
+  display.setTextSize(3); display.setCursor(0, 28); display.printf("%d%%", moist);
+
+  display.setTextSize(1);
+  display.setCursor(75, 20); display.printf("T:%.1fC", t);
+  display.setCursor(75, 30); display.printf("H:%.0f%%", h);
   
-  // Read soil moisture (analog)
-  int soilRaw = analogRead(SOIL_SENSOR_PIN);
-  int soilMoisture = map(soilRaw, SOIL_DRY_VALUE, SOIL_WET_VALUE, 0, 100);
-  soilMoisture = constrain(soilMoisture, 0, 100);
-  
-  // Validate readings
-  if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("⚠️ DHT sensor read failed!");
-    return;
-  }
-  
-  Serial.println("📊 Sensor Readings:");
-  Serial.printf("   Soil Moisture: %d%%\n", soilMoisture);
-  Serial.printf("   Temperature:   %.1f°C\n", temperature);
-  Serial.printf("   Humidity:      %.1f%%\n", humidity);
-  
-  // Upload to Firebase — Update 'latest'
-  String latestUrl = String(FIREBASE_HOST) + "/sensorData/" + USER_ID + "/latest.json";
-  
-  StaticJsonDocument<256> latestDoc;
-  latestDoc["soilMoisture"] = soilMoisture;
-  latestDoc["temperature"]  = round(temperature * 10) / 10.0;
-  latestDoc["humidity"]     = round(humidity * 10) / 10.0;
-  latestDoc["timestamp"]    = millis(); // Use server timestamp ideally
-  
-  String latestJson;
-  serializeJson(latestDoc, latestJson);
-  
-  if (httpPut(latestUrl, latestJson)) {
-    Serial.println("   ✅ Latest data uploaded");
-  }
-  
-  // Push to 'history' for graphs
-  String historyUrl = String(FIREBASE_HOST) + "/sensorData/" + USER_ID + "/history.json";
-  
-  if (httpPost(historyUrl, latestJson)) {
-    Serial.println("   ✅ History entry added");
-  }
-  
-  Serial.println();
+  display.drawLine(0, 50, 128, 50, WHITE);
+  display.setCursor(0, 54); 
+  display.printf("PUMP:%s [%s]", pumpOn ? "ON" : "OFF", manualMode ? "MAN" : mode.c_str());
+  display.setCursor(95, 54); display.printf("%s", (WiFi.status() == WL_CONNECTED) ? "WIFI" : "OFF!");
+  display.display();
 }
 
-// ═══════════════════════════════════════════
-// Check Pump Status from Firebase
-// ═══════════════════════════════════════════
-void checkPumpStatus() {
-  String url = String(FIREBASE_HOST) + "/irrigation/" + USER_ID + "/pumpStatus.json";
-  
-  HTTPClient http;
-  http.begin(url);
-  int httpCode = http.GET();
-  
-  if (httpCode == 200) {
-    String response = http.getString();
-    response.replace("\"", ""); // Remove quotes
-    
-    bool shouldBeOn = (response == "ON");
-    
-    if (shouldBeOn != pumpOn) {
-      pumpOn = shouldBeOn;
-      digitalWrite(RELAY_PIN, pumpOn ? HIGH : LOW);
-      Serial.printf("💧 Pump %s\n", pumpOn ? "ON ✅" : "OFF ⛔");
+void setPump(bool on) {
+  if (millis() - lastRelay < 1000) return;
+  if (on != pumpOn) {
+    pumpOn = on; setRelay(on); lastRelay = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      httpPut(String(FIREBASE_HOST) + "/irrigation/" + DEVICE_CODE + "/pumpStatus.json", on ? "\"ON\"" : "\"OFF\"");
     }
-  } else {
-    Serial.printf("⚠️ Pump check failed (HTTP %d)\n", httpCode);
   }
-  
-  http.end();
 }
 
-// ═══════════════════════════════════════════
-// HTTP Helper — PUT request
-// ═══════════════════════════════════════════
-bool httpPut(String url, String jsonPayload) {
-  HTTPClient http;
-  http.begin(url);
-  http.addHeader("Content-Type", "application/json");
-  
-  int httpCode = http.PUT(jsonPayload);
-  bool success = (httpCode == 200);
-  
-  if (!success) {
-    Serial.printf("   ❌ PUT failed (HTTP %d)\n", httpCode);
+void readSenses() {
+  float temp = dht.readTemperature(); if (!isnan(temp) && temp < 100) { t = temp; h = dht.readHumidity(); }
+  moist = constrain(map(analogRead(SOIL_PIN), 4095, 1500, 0, 100), 0, 100);
+  if (WiFi.status() == WL_CONNECTED) {
+    StaticJsonDocument<256> doc; doc["soilMoisture"] = moist; doc["temperature"] = round(t * 10) / 10.0;
+    doc.createNestedObject("timestamp")[".sv"] = "timestamp";
+    String j; serializeJson(doc, j);
+    httpPut(String(FIREBASE_HOST) + "/sensorData/" + DEVICE_CODE + "/latest.json", j);
+    httpPost(String(FIREBASE_HOST) + "/sensorData/" + DEVICE_CODE + "/history.json", j);
   }
-  
-  http.end();
-  return success;
 }
 
-// ═══════════════════════════════════════════
-// HTTP Helper — POST request
-// ═══════════════════════════════════════════
-bool httpPost(String url, String jsonPayload) {
-  HTTPClient http;
-  http.begin(url);
-  http.addHeader("Content-Type", "application/json");
+void sync(unsigned long now) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  static String lastCloudPump = "";
+  HTTPClient h_cli; 
+  h_cli.begin(String(FIREBASE_HOST) + "/irrigation/" + DEVICE_CODE + ".json");
   
-  int httpCode = http.POST(jsonPayload);
-  bool success = (httpCode == 200);
-  
-  if (!success) {
-    Serial.printf("   ❌ POST failed (HTTP %d)\n", httpCode);
+  if (h_cli.GET() == 200) {
+    StaticJsonDocument<512> doc; 
+    deserializeJson(doc, h_cli.getString());
+    
+    String currentCloudPump = String(doc["pumpStatus"] | "OFF");
+    mode = String(doc["mode"] | "MANUAL");
+
+    // DETECT ONLINE OVERRIDE: If cloud status changed since our last fetch
+    if (lastCloudPump != "" && currentCloudPump != lastCloudPump) {
+      Serial.println("[CLOUD] Remote command detected: " + currentCloudPump);
+      manualMode = false; // Remote command clears local manual override
+      setPump(currentCloudPump == "ON");
+    }
+    lastCloudPump = currentCloudPump;
+
+    // Logic based on Priority
+    if (!manualMode) {
+      bool target = (currentCloudPump == "ON");
+      if (mode == "AUTO") {
+        int threshold = doc["threshold"] | 30;
+        if (moist < threshold && !target) target = true;
+        else if (moist >= (threshold + 5) && target) target = false; // Added hysteresis
+      }
+      if (target != pumpOn) setPump(target);
+    }
+
+    // Heartbeat
+    StaticJsonDocument<100> hb; hb["status"] = "online"; hb.createNestedObject("lastSeen")[".sv"] = "timestamp";
+    String j; serializeJson(hb, j); httpPatch(String(FIREBASE_HOST) + "/devices/" + DEVICE_CODE + ".json", j);
   }
-  
-  http.end();
-  return success;
+  h_cli.end();
 }
+
+void setRelay(bool on) { digitalWrite(RELAY_PIN, on ? LOW : HIGH); }
+bool httpPut(String u, String j) { HTTPClient h; h.begin(u); int c = h.PUT(j); h.end(); return c == 200; }
+bool httpPatch(String u, String j) { HTTPClient h; h.begin(u); int c = h.PATCH(j); h.end(); return c == 200; }
+bool httpPost(String u, String j) { HTTPClient h; h.begin(u); int c = h.POST(j); h.end(); return c == 200; }

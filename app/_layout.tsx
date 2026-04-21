@@ -20,6 +20,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="login" options={{ presentation: 'modal' }} />
           <Stack.Screen name="signup" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="device-pair" options={{ presentation: 'modal' }} />
         </Stack>
         <StatusBar style="auto" />
       </AuthProvider>

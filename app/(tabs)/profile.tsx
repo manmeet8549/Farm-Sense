@@ -136,6 +136,35 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          {/* Connected Device Card */}
+          <View style={styles.deviceCard}>
+            <View style={styles.deviceCardHeader}>
+              <View style={styles.deviceIconBox}>
+                <MaterialCommunityIcons name="chip" size={20} color="#4ade80" />
+              </View>
+              <View style={styles.deviceTextContainer}>
+                <Text style={styles.deviceLabel}>CONNECTED DEVICE</Text>
+                {user?.deviceCode ? (
+                  <View style={styles.deviceCodeRow}>
+                    <Text style={styles.deviceCodeText}>ESP-{user.deviceCode}</Text>
+                    <View style={styles.deviceOnlineDot} />
+                  </View>
+                ) : (
+                  <Text style={styles.deviceNotPaired}>No device paired</Text>
+                )}
+              </View>
+            </View>
+            <TouchableOpacity 
+              style={styles.switchDeviceBtn}
+              onPress={() => router.push('/device-pair')}
+            >
+              <MaterialCommunityIcons name="swap-horizontal" size={16} color="#022E1F" />
+              <Text style={styles.switchDeviceBtnText}>
+                {user?.deviceCode ? 'Switch Device' : 'Pair Device'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Farmer's Profile Section */}
           <View style={styles.glassCard}>
             <View style={styles.cardHeaderRowSpace}>
@@ -681,5 +710,82 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
     color: '#dc2626', // red text
-  }
+  },
+
+  /* DEVICE CARD */
+  deviceCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.03,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  deviceCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  deviceIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#064e3b',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  deviceTextContainer: {
+    flex: 1,
+  },
+  deviceLabel: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#6b7280',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  deviceCodeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  deviceCodeText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#022E1F',
+    letterSpacing: 2,
+  },
+  deviceOnlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4ade80',
+  },
+  deviceNotPaired: {
+    fontSize: 14,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+  },
+  switchDeviceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f0fdf4',
+    paddingVertical: 12,
+    borderRadius: 15,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+  },
+  switchDeviceBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#022E1F',
+  },
 });

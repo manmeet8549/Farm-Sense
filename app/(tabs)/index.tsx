@@ -16,9 +16,12 @@ export default function InsightsScreen() {
   const [activeMoisture, setActiveMoisture] = useState<number | null>(null);
   const [activeIrrigation, setActiveIrrigation] = useState<number | null>(6);
 
-  // --- Firebase Real-Time Data ---
-  const { latest: sensorLatest, history: sensorHistory, loading: sensorLoading } = useSensorData();
-  const { data: irrigationData, waterUsage, loading: irrigLoading } = useIrrigation();
+  // Device code from paired ESP32 (falls back for demo)
+  const deviceId = user?.deviceCode || 'user_001';
+
+  // --- Firebase Real-Time Data (scoped to paired device) ---
+  const { latest: sensorLatest, history: sensorHistory, loading: sensorLoading } = useSensorData(deviceId);
+  const { data: irrigationData, waterUsage, loading: irrigLoading } = useIrrigation(deviceId);
   const { current: weatherCurrent } = useWeather();
 
   const currTemp = weatherCurrent?.temp ?? 28;
@@ -298,9 +301,6 @@ export default function InsightsScreen() {
             <Text style={styles.recDesc}>
               Weather models predict a minor dry spell. Increasing Sector B irrigation by 15% will maintain optimal soil moisture levels for the current growth phase.
             </Text>
-            <TouchableOpacity style={styles.applyBtn} activeOpacity={0.8}>
-              <Text style={styles.applyBtnText}>APPLY SCHEDULE</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.recCard}>
@@ -311,7 +311,7 @@ export default function InsightsScreen() {
             <Text style={styles.recDesc}>
               Temperatures are expected to peak at 34°C tomorrow afternoon. Consider deploying partial shade nets over vulnerable saplings in the nursery.
             </Text>
-            <TouchableOpacity style={styles.linkBtn}>
+            <TouchableOpacity style={styles.linkBtn} onPress={() => router.push('/weather')}>
               <Text style={styles.linkBtnText}>VIEW DETAILS</Text>
               <Ionicons name="arrow-forward" size={14} color="#ea580c" />
             </TouchableOpacity>
@@ -751,19 +751,6 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     lineHeight: 20,
     marginBottom: 20,
-  },
-  applyBtn: {
-    backgroundColor: '#013a20',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-    alignSelf: 'flex-start',
-  },
-  applyBtnText: {
-    color: '#ffffff',
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
   },
   linkBtn: {
     flexDirection: 'row',

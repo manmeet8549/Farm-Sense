@@ -46,7 +46,7 @@ export default function SignupScreen() {
     const result = await signup(fullName.trim(), email.trim().toLowerCase(), password);
     setIsLoading(false);
     if (result.success) {
-      router.replace('/(tabs)');
+      router.replace('/device-pair');
     } else {
       setErrorMsg(result.error || 'Signup failed.');
     }

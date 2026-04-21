@@ -1,28 +1,32 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true,
+    "devices": {
+      ".read": true,
+      "$deviceCode": {
+        ".write": "data.exists() || !data.exists()"
+      }
+    },
+    "users": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
     "sensorData": {
-      "$userId": {
-        "history": {
-          ".indexOn": ["timestamp"]
-        }
+      "$deviceCode": {
+        ".read": "true",
+        ".write": "true"
       }
     },
-    "alerts": {
-      "$userId": {
-        ".indexOn": ["timestamp"]
+    "irrigation": {
+      "$deviceCode": {
+        ".read": "true",
+        ".write": "true"
       }
     },
-    "health_scans": {
-      "$userId": {
-        ".indexOn": ["timestamp"]
-      }
-    },
-    "ai_queries": {
-      "$userId": {
-        ".indexOn": ["timestamp"]
-      }
+    "auth": {
+      ".read": "true",
+      ".write": "true"
     }
   }
 }

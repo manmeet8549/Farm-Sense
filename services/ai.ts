@@ -77,8 +77,8 @@ export async function analyzeImage(
   recommendation: string;
 }> {
   try {
-    // Truncate very large images to avoid API limits (keep first ~500KB of base64)
-    const maxBase64Length = 500000;
+    // Truncate very large images to avoid API limits (keep first ~2MB of base64)
+    const maxBase64Length = 2000000;
     const trimmedBase64 = imageBase64.length > maxBase64Length
       ? imageBase64.substring(0, maxBase64Length)
       : imageBase64;
@@ -122,17 +122,31 @@ Respond in ${language}.`;
       }),
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('NVIDIA Vision API Error:', response.status, errorText);
+      
+      // If we get an "Internal Server Error" or similar, use the fallback
+      if (response.status >= 500 || errorText.includes('Internal Server Error')) {
+         throw new Error('AI Server side error');
+      }
+      throw new Error(`AI analysis failed: ${errorText}`);
+    }
+
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content || '';
 
     console.log('Vision AI raw response:', text);
 
-    // Parse the structured response
-    const diseaseMatch = text.match(/DISEASE:\s*(.+?)(?:\n|$)/i);
+    // Parse the structured response (more robust regex that looks ahead for labels)
+    const diseaseMatch = text.match(/DISEASE:\s*(.+?)(?=\s*CONFIDENCE:|\s*RECOMMENDATION:|\n|$)/i);
     const confidenceMatch = text.match(/CONFIDENCE:\s*(\d+)/i);
     const recMatch = text.match(/RECOMMENDATION:\s*(.+)/is);
 
-    const disease = diseaseMatch?.[1]?.trim() || 'Unknown';
+    let disease = diseaseMatch?.[1]?.trim() || 'Unknown';
+    // Remove trailing artifacts from disease name if patterns like 'CONFIDENCE:' leaked in
+    disease = disease.split(/CONFIDENCE:|RECOMMENDATION:/i)[0].trim();
+    
     const confidence = parseInt(confidenceMatch?.[1] || '50');
     const recommendation = recMatch?.[1]?.trim() || text || 'Please consult a local agricultural expert for detailed analysis.';
 

@@ -37,7 +37,8 @@ export default function LoginScreen() {
     const result = await login(email.trim().toLowerCase(), password);
     setIsLoading(false);
     if (result.success) {
-      router.replace('/(tabs)');
+      // Route to device pairing if no device code is set
+      router.replace('/device-pair');
     } else {
       setErrorMsg(result.error || 'Login failed.');
     }

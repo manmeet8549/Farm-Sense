@@ -175,8 +175,73 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     service: 'FarmSense AI Backend v2.0',
     uptime: Math.floor(process.uptime()),
-    features: ['security', 'rate-limiting', 'smart-irrigation', 'multilingual-ai', 'weather-cache'],
+    features: ['security', 'rate-limiting', 'smart-irrigation', 'multilingual-ai', 'weather-cache', 'multi-device'],
   });
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+// 0. DEVICE MANAGEMENT — Registration & Validation
+// ═══════════════════════════════════════════════════════════════
+
+// POST — ESP32 self-registers on boot
+app.post('/api/devices/register', async (req, res) => {
+  try {
+    const { deviceCode, ip } = req.body;
+
+    if (!deviceCode || typeof deviceCode !== 'string' || !/^\d{4}$/.test(deviceCode)) {
+      return sendError(res, 'deviceCode must be a 4-digit string', 400);
+    }
+
+    const deviceData = {
+      deviceCode,
+      status: 'online',
+      lastSeen: Date.now(),
+      registeredAt: Date.now(),
+      ip: ip || 'unknown',
+    };
+
+    // Use PATCH to preserve existing registeredAt if already exists
+    const existingSnap = await db.ref(`devices/${deviceCode}/registeredAt`).once('value');
+    if (existingSnap.exists()) {
+      // Just update heartbeat fields, preserve registeredAt
+      await db.ref(`devices/${deviceCode}`).update({
+        status: 'online',
+        lastSeen: Date.now(),
+        ip: ip || 'unknown',
+      });
+    } else {
+      await db.ref(`devices/${deviceCode}`).set(deviceData);
+    }
+
+    log('DEVICE', `Registered/heartbeat: ${deviceCode} (IP: ${ip || 'unknown'})`);
+    sendSuccess(res, { deviceCode, status: 'registered' });
+  } catch (error) {
+    sendError(res, error.message);
+  }
+});
+
+// GET — Validate a device code exists (used by mobile app pairing)
+app.get('/api/devices/:deviceCode', async (req, res) => {
+  try {
+    const { deviceCode } = req.params;
+
+    if (!/^\d{4}$/.test(deviceCode)) {
+      return sendError(res, 'Device code must be 4 digits', 400);
+    }
+
+    const snapshot = await db.ref(`devices/${deviceCode}`).once('value');
+    
+    if (!snapshot.exists()) {
+      return sendError(res, 'Device not found', 404);
+    }
+
+    const deviceData = snapshot.val();
+    log('DEVICE', `Validated device: ${deviceCode}`);
+    sendSuccess(res, deviceData);
+  } catch (error) {
+    sendError(res, error.message);
+  }
 });
 
 

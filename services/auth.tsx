@@ -14,6 +14,7 @@ export interface AuthUser {
   landArea: string;
   primaryCrops: string;
   avatarUri: string;
+  deviceCode: string;
 }
 
 interface AuthContextType {
@@ -23,6 +24,7 @@ interface AuthContextType {
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<AuthUser>) => Promise<void>;
+  setDeviceCode: (code: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -32,6 +34,7 @@ const AuthContext = createContext<AuthContextType>({
   signup: async () => ({ success: false }),
   logout: async () => {},
   updateProfile: async () => {},
+  setDeviceCode: async () => {},
 });
 
 // Simple hash for demo (NOT production-grade)
@@ -100,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         createdAt: Date.now(),
       });
 
-      // Save user profile
+      // Save user profile (deviceCode is empty until pairing)
       const newProfile: AuthUser = {
         userId,
         name,
@@ -111,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         landArea: '',
         primaryCrops: '',
         avatarUri: 'https://www.w3schools.com/howto/img_avatar.png',
+        deviceCode: '',
       };
 
       await set(ref(db, `users/${userId}`), newProfile);
@@ -182,8 +186,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await set(ref(db, `users/${user.userId}`), updatedUser);
   }
 
+  async function setDeviceCode(code: string) {
+    if (!user) return;
+
+    const updatedUser = { ...user, deviceCode: code };
+    setUser(updatedUser);
+    await AsyncStorage.setItem('farmsense_user', JSON.stringify(updatedUser));
+
+    // Persist to Firebase user profile
+    await set(ref(db, `users/${user.userId}/deviceCode`), code);
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, updateProfile }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, updateProfile, setDeviceCode }}>
       {children}
     </AuthContext.Provider>
   );

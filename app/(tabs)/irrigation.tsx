@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useSensorData, useIrrigation, useAlerts, updatePumpStatus, updateIrrigationMode, updateThreshold as fbUpdateThreshold } from '../../services/database';
+import { useSensorData, useIrrigation, useAlerts, updatePumpStatus, updateIrrigationMode, updateThreshold as fbUpdateThreshold, updateIrrigationTimer } from '../../services/database';
 import { useAuth } from '../../services/auth';
 
 // --- CUSTOM CIRCULAR PROGRESS RING (PURE CSS) ---
@@ -73,10 +73,13 @@ export default function IrrigationScreen() {
   const { user } = useAuth();
   const [sliderWidth, setSliderWidth] = useState(1);
 
-  // --- Firebase Real-Time Data ---
-  const { latest: sensorLatest, loading: sensorLoading } = useSensorData();
-  const { data: irrigData, waterUsage, loading: irrigLoading } = useIrrigation();
-  const { alerts } = useAlerts('user_001');
+  // Device code from paired ESP32 (falls back to 'user_001' for demo)
+  const deviceId = user?.deviceCode || 'user_001';
+
+  // --- Firebase Real-Time Data (scoped to paired device) ---
+  const { latest: sensorLatest, loading: sensorLoading } = useSensorData(deviceId);
+  const { data: irrigData, waterUsage, loading: irrigLoading } = useIrrigation(deviceId);
+  const { alerts } = useAlerts(deviceId);
 
   // filter recent relevant alerts
   const recentAlerts = alerts.slice(0, 3);
@@ -98,13 +101,13 @@ export default function IrrigationScreen() {
     }
   }, [sensorLatest]);
 
-  // Fast polling: check every 2s, offline after 7s (ESP32 heartbeat is 3s)
+  // Connection monitoring: check every 2s, offline after 15s (ESP32 heartbeat is 5s)
   useEffect(() => {
     const timer = setInterval(() => {
       const elapsed = Date.now() - lastSeenRef.current;
-      if (elapsed > 7000 && isOnline) {
+      if (elapsed > 15000 && isOnline) {
         setIsOnline(false);
-      } else if (elapsed <= 7000 && !isOnline) {
+      } else if (elapsed <= 15000 && !isOnline) {
         setIsOnline(true);
       }
     }, 2000);
@@ -141,10 +144,10 @@ export default function IrrigationScreen() {
 
   // Toggle handlers that write to Firebase
   const handlePumpToggle = async () => {
-    await updatePumpStatus('user_001', isPumpOn ? 'OFF' : 'ON');
+    await updatePumpStatus(deviceId, isPumpOn ? 'OFF' : 'ON');
   };
   const handleModeToggle = async () => {
-    await updateIrrigationMode('user_001', isAuto ? 'MANUAL' : 'AUTO');
+    await updateIrrigationMode(deviceId, isAuto ? 'MANUAL' : 'AUTO');
   };
 
   // --- Pump Timer Logic ---
@@ -155,7 +158,7 @@ export default function IrrigationScreen() {
     if (isPumpOn && selectedTimer > 0) {
       // Convert minutes to ms
       timerId = setTimeout(async () => {
-        await updatePumpStatus('user_001', 'OFF');
+        await updatePumpStatus(deviceId, 'OFF');
         setSelectedTimer(0); // Reset timer
       }, selectedTimer * 60000);
     }
@@ -167,7 +170,7 @@ export default function IrrigationScreen() {
     const x = evt.nativeEvent.locationX;
     const pct = Math.max(0, Math.min(x / sliderWidth, 1));
     const newThreshold = Math.round(pct * 100);
-    await fbUpdateThreshold('user_001', newThreshold);
+    await fbUpdateThreshold(deviceId, newThreshold);
   };
 
   return (
@@ -274,7 +277,11 @@ export default function IrrigationScreen() {
                 <TouchableOpacity 
                   key={mins} 
                   style={[styles.timerOptionPill, selectedTimer === mins && styles.timerOptionPillActive]}
-                  onPress={() => setSelectedTimer(mins)}
+                  onPress={async () => {
+                    setSelectedTimer(mins);
+                    // Sync timer to Firebase for ESP32 visibility
+                    await updateIrrigationTimer(deviceId, mins);
+                  }}
                 >
                   <Text style={[styles.timerOptionText, selectedTimer === mins && styles.timerOptionTextActive]}>
                     {mins}m
@@ -283,7 +290,10 @@ export default function IrrigationScreen() {
               ))}
               <TouchableOpacity 
                 style={[styles.timerOptionPill, selectedTimer === 0 && styles.timerOptionPillActive]}
-                onPress={() => setSelectedTimer(0)}
+                onPress={async () => {
+                  setSelectedTimer(0);
+                  await updateIrrigationTimer(deviceId, 0);
+                }}
               >
                 <Text style={[styles.timerOptionText, selectedTimer === 0 && styles.timerOptionTextActive]}>Off</Text>
               </TouchableOpacity>
@@ -303,14 +313,14 @@ export default function IrrigationScreen() {
           <View style={styles.modeToggleContainer}>
             <TouchableOpacity 
               style={[styles.modeBtn, isAuto && styles.modeBtnActive]}
-              onPress={() => updateIrrigationMode('user_001', 'AUTO')}
+              onPress={() => updateIrrigationMode(deviceId, 'AUTO')}
               activeOpacity={0.9}
             >
               <Text style={[styles.modeBtnText, isAuto && styles.modeBtnTextActive]}>Auto</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.modeBtn, !isAuto && styles.modeBtnActive]}
-              onPress={() => updateIrrigationMode('user_001', 'MANUAL')}
+              onPress={() => updateIrrigationMode(deviceId, 'MANUAL')}
               activeOpacity={0.9}
             >
               <Text style={[styles.modeBtnText, !isAuto && styles.modeBtnTextActive]}>Manual</Text>

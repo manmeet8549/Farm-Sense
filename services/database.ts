@@ -108,6 +108,10 @@ export async function updateThreshold(userId: string = DEFAULT_USER_ID, threshol
   await set(ref(db, `irrigation/${userId}/threshold`), threshold);
 }
 
+export async function updateIrrigationTimer(userId: string = DEFAULT_USER_ID, timer: number) {
+  await update(ref(db, `irrigation/${userId}`), { timer });
+}
+
 // ─────────────────────────────────────────────
 // WEATHER — Real-time hook
 // ─────────────────────────────────────────────

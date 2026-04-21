@@ -11,14 +11,19 @@ export default function HealthScreen() {
   const { user } = useAuth();
 
   // --- Firebase Real-Time Data ---
-  const { scans, loading: scansLoading } = useHealthScans();
-  const { latest: sensorLatest } = useSensorData();
+  const deviceId = user?.deviceCode || 'user_001';
+  const { scans, loading: scansLoading } = useHealthScans(deviceId);
+  const { latest: sensorLatest } = useSensorData(deviceId);
 
   // Get latest scan result for status card
   const latestScan = scans.length > 0 ? scans[0] : null;
-  const healthStatus = latestScan?.diseaseName === 'Healthy' || !latestScan ? 'Healthy' : latestScan.diseaseName;
+  
+  // Sanitize healthStatus: remove AI labels if they leaked in and cap length
+  let rawStatus = latestScan?.diseaseName === 'Healthy' || !latestScan ? 'Healthy' : latestScan.diseaseName;
+  const healthStatus = rawStatus.split(/CONFIDENCE:|RECOMMENDATION:/i)[0].trim();
+  
   const healthSubText = latestScan && latestScan.diseaseName !== 'Healthy'
-    ? `${latestScan.diseaseName} detected (${latestScan.confidence}% confidence)`
+    ? `${healthStatus} detected (${latestScan.confidence}% confidence)`
     : 'No major disease detected';
 
   return (
@@ -62,8 +67,24 @@ export default function HealthScreen() {
               </View>
             </View>
             
-            <Text style={styles.statusBigText}>{healthStatus}</Text>
-            <Text style={styles.statusSubText}>{healthSubText}</Text>
+            <Text 
+              style={[
+                styles.statusBigText, 
+                healthStatus.length > 15 && { fontSize: 20 }
+              ]} 
+              numberOfLines={2}
+            >
+              {healthStatus}
+            </Text>
+            <Text 
+              style={[
+                styles.statusSubText,
+                healthStatus.length > 20 && { fontSize: 13 }
+              ]} 
+              numberOfLines={3}
+            >
+              {healthSubText}
+            </Text>
           </View>
 
           {/* 2. Ask AI Button */}
@@ -83,51 +104,64 @@ export default function HealthScreen() {
             <View style={styles.alertCard}>
               <View style={styles.alertImageContainer}>
                 <Image 
-                  source={{ uri: 'https://images.unsplash.com/photo-1595015949544-245ed7e79391?ixlib=rb-4.0.3&auto=format&fit=crop&w=300&q=80' }} 
+                  source={{ uri: latestScan?.imageUri || 'https://images.unsplash.com/photo-1592813587002-3c35b0212727?auto=format&fit=crop&w=300&q=80' }} 
                   style={styles.alertImage}
                 />
               </View>
               
               <View style={styles.alertContent}>
                 <View style={styles.alertHeaderRow}>
-                  <Text style={styles.alertTitle}>Leaf Blight</Text>
-                  <View style={styles.matchPill}>
-                    <Text style={styles.matchPillText}>92% Match</Text>
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={styles.alertTitle} numberOfLines={2}>{healthStatus}</Text>
                   </View>
+                  {latestScan && (
+                    <View style={[styles.matchPill, { backgroundColor: latestScan.confidence > 70 ? '#dcfce7' : '#fee2e2' }]}>
+                      <Text style={[styles.matchPillText, { color: latestScan.confidence > 70 ? '#059669' : '#b91c1c' }]}>
+                        {latestScan.confidence}%
+                      </Text>
+                    </View>
+                  )}
                 </View>
                 
-                <Text style={styles.alertDesc}>
-                  Detected on North Field tomatoes.
+                <Text style={styles.alertDesc} numberOfLines={2}>
+                  {latestScan ? `Detected on ${new Date(latestScan.timestamp).toLocaleDateString()}. Check recommendations below.` : 'No active alerts for your crops.'}
                 </Text>
                 
-                <TouchableOpacity>
-                  <Text style={styles.viewDetailsText}>View details</Text>
+                <TouchableOpacity onPress={() => router.push('/ai')}>
+                  <Text style={styles.viewDetailsText}>View in AI Chat</Text>
                 </TouchableOpacity>
               </View>
             </View>
           </View>
 
           {/* 4. AI Recommendations Card */}
-          <View style={styles.recommendationsCard}>
-            <View style={styles.recHeaderRow}>
-              <MaterialCommunityIcons name="robot-outline" size={18} color="#4b5563" />
-              <Text style={styles.recHeaderTitle}>AI RECOMMENDATIONS</Text>
+          {latestScan && latestScan.recommendation && (
+            <View style={styles.recommendationsCard}>
+              <View style={styles.recHeaderRow}>
+                <MaterialCommunityIcons name="robot-outline" size={18} color="#4b5563" />
+                <Text style={styles.recHeaderTitle}>AI RECOMMENDATIONS</Text>
+              </View>
+              
+              {latestScan.recommendation.split(/[.!\n]/).filter(s => s.trim().length > 10).map((sentence, idx) => (
+                <View key={idx} style={styles.recListItem}>
+                  <Ionicons name="checkmark-circle-outline" size={20} color="#022E1F" style={styles.recListIcon} />
+                  <Text style={styles.recListText}>
+                    {sentence.trim()}.
+                  </Text>
+                </View>
+              ))}
             </View>
-            
-            <View style={styles.recListItem}>
-              <Ionicons name="checkmark-circle-outline" size={20} color="#022E1F" style={styles.recListIcon} />
-              <Text style={styles.recListText}>
-                Apply fungicide within 2 days to prevent spread.
-              </Text>
-            </View>
-            
-            <View style={styles.recListItem}>
-              <Ionicons name="eye-outline" size={20} color="#022E1F" style={styles.recListIcon} />
-              <Text style={styles.recListText}>
-                Monitor affected area closely for 48 hours.
-              </Text>
-            </View>
-          </View>
+          )}
+
+          {!latestScan && (
+             <View style={styles.recommendationsCard}>
+                <View style={styles.recHeaderRow}>
+                  <MaterialCommunityIcons name="robot-outline" size={18} color="#4b5563" />
+                  <Text style={styles.recHeaderTitle}>NO SCAN DATA</Text>
+                </View>
+                <Text style={styles.recListText}>Scan a plant image to receive AI-powered health diagonal and treatment advice.</Text>
+             </View>
+          )}
 
           {/* 5. Metrics Row */}
           <View style={styles.metricsRow}>
@@ -275,10 +309,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#022E1F',
     marginBottom: 5,
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
   statusSubText: {
     fontSize: 14,
     color: '#4b5b54',
+    textAlign: 'center',
+    paddingHorizontal: 15,
   },
 
   /* 2. ASK AI BUTTON */
@@ -360,11 +398,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2', // light red
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
+    minHeight: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   matchPillText: {
     color: '#b91c1c', // dark red
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   alertDesc: {

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { sendChatQuery, analyzeImage } from '../../services/ai';
-import { saveAIQuery, saveHealthScan, useSensorData } from '../../services/database';
+import { saveAIQuery, saveHealthScan, useSensorData, useHealthScans } from '../../services/database';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../services/auth';
 
@@ -20,8 +20,34 @@ export default function AiScreen() {
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeLanguage, setActiveLanguage] = useState('English');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [currentAnalysis, setCurrentAnalysis] = useState<{
+    disease: string;
+    confidence: number;
+    recommendation: string;
+    treatment: string;
+  } | null>(null);
 
-  const { latest: sensorLatest } = useSensorData();
+  // Device code from paired ESP32
+  const deviceId = user?.deviceCode || 'user_001';
+
+  const { latest: sensorLatest } = useSensorData(deviceId);
+  const { scans } = useHealthScans(deviceId);
+  const latestScan = scans && scans.length > 0 ? scans[scans.length - 1] : null;
+
+  // Determine what to show in the summary cards
+  const displayResult = currentAnalysis || (latestScan ? {
+    disease: latestScan.diseaseName,
+    confidence: latestScan.confidence,
+    recommendation: 'Check soil moisture',
+    treatment: latestScan.recommendation.split('.')[0] || 'Apply treatment'
+  } : null);
+
+  // Dynamic recommendation based on sensors if no disease
+  const sensorRec = sensorLatest ? (
+    sensorLatest.soilMoisture < 30 ? 'Irrigate immediately' : 
+    sensorLatest.temperature > 35 ? 'Protect from heat' : 'Conditions optimal'
+  ) : 'Monitor crop growth';
   const chatScrollViewRef = useRef<ScrollView>(null);
 
   // Auto-scroll to bottom of chat when messages change
@@ -55,7 +81,7 @@ export default function AiScreen() {
       }
 
       setMessages(prev => [...prev, { role: 'ai', text: response, time: now, lang: activeLanguage }]);
-      await saveAIQuery('user_001', {
+      await saveAIQuery(deviceId, {
         type: 'chat', input: userMsg, response, language: activeLanguage, timestamp: Date.now(),
       });
     } catch (e) {
@@ -135,6 +161,7 @@ export default function AiScreen() {
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       const imageUri = asset.uri;
+      setSelectedImage(imageUri);
       const now = new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' });
 
       // Add user image message
@@ -153,20 +180,25 @@ export default function AiScreen() {
         }
 
         // Add AI analysis response with results
+        const newAnalysis = {
+          disease: analysisResult.diseaseName,
+          confidence: analysisResult.confidence,
+          recommendation: analysisResult.recommendation,
+          treatment: analysisResult.recommendation.split('.')[0] || 'Consult expert', // Simple extraction for summary
+        };
+
+        setCurrentAnalysis(newAnalysis);
+
         setMessages(prev => [...prev, {
           role: 'ai',
           text: analysisResult.recommendation,
           time: now,
           image: imageUri,
-          analysis: {
-            disease: analysisResult.diseaseName,
-            confidence: analysisResult.confidence,
-            recommendation: analysisResult.recommendation,
-          },
+          analysis: newAnalysis,
         }]);
 
         // Save to Firebase
-        await saveHealthScan('user_001', {
+        await saveHealthScan(deviceId, {
           imageUri,
           diseaseName: analysisResult.diseaseName,
           confidence: analysisResult.confidence,
@@ -223,55 +255,61 @@ export default function AiScreen() {
           <View style={styles.visualAnalysisContainer}>
             <Text style={styles.sectionTitle}>Crop Visual Analysis</Text>
             
-            <View style={styles.imageDropzone}>
-              <MaterialCommunityIcons name="apple" size={140} color="rgba(255,255,255,0.4)" style={styles.appleWatermark} />
-              <View style={styles.dropzoneContent}>
-                <MaterialCommunityIcons name="camera-plus-outline" size={32} color="#022E1F" />
-                <Text style={styles.dropzoneText}>SELECT IMAGE</Text>
+            <TouchableOpacity 
+              style={styles.imageDropzone}
+              onPress={() => pickImage('gallery')}
+              activeOpacity={0.8}
+            >
+              {selectedImage ? (
+                <Image source={{ uri: selectedImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              ) : (
+                <MaterialCommunityIcons name="apple" size={140} color="rgba(255,255,255,0.4)" style={styles.appleWatermark} />
+              )}
+              <View style={[styles.dropzoneContent, selectedImage && { backgroundColor: 'rgba(255,255,255,0.6)', borderRadius: 12, padding: 8 }]}>
+                <MaterialCommunityIcons name={selectedImage ? "refresh" : "camera-plus-outline"} size={32} color="#022E1F" />
+                <Text style={styles.dropzoneText}>{selectedImage ? "CHANGE IMAGE" : "SELECT IMAGE"}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
 
             <View style={styles.analysisActionRow}>
-              <TouchableOpacity style={styles.uploadBtn}>
+              <TouchableOpacity style={styles.uploadBtn} onPress={() => pickImage('gallery')} disabled={isLoading}>
                 <MaterialCommunityIcons name="image-outline" size={20} color="#022E1F" />
                 <Text style={styles.uploadBtnText}>Upload</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.scanBtn}>
-                <MaterialCommunityIcons name="camera-iris" size={20} color="#ffffff" />
-                <Text style={styles.scanBtnText}>Scan Crop</Text>
+              <TouchableOpacity style={styles.scanBtn} onPress={() => pickImage('camera')} disabled={isLoading}>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <MaterialCommunityIcons name="camera-iris" size={20} color="#ffffff" />
+                )}
+                <Text style={styles.scanBtnText}>{isLoading ? 'Analyzing...' : 'Scan Crop'}</Text>
               </TouchableOpacity>
             </View>
           </View>
 
           {/* Detection Alert Section */}
-          <View style={styles.alertCard}>
+          <View style={[styles.alertCard, displayResult?.disease === 'Healthy' && { backgroundColor: '#ecfdf5', borderColor: '#dcfce7' }]}>
             <View style={styles.alertHeaderRow}>
               <View style={styles.alertIconBox}>
-                <MaterialCommunityIcons name="alert-outline" size={20} color="#b91c1c" />
+                <MaterialCommunityIcons 
+                  name={displayResult?.disease === 'Healthy' ? "check-circle-outline" : "alert-outline"} 
+                  size={20} 
+                  color={displayResult?.disease === 'Healthy' ? "#059669" : "#b91c1c"} 
+                />
               </View>
-              <Text style={styles.alertTitle}>Leaf Rust Detected</Text>
+              <Text style={styles.alertTitle}>
+                {displayResult ? (displayResult.disease === 'Healthy' ? 'No Issues Found' : `${displayResult.disease} Detected`) : 'Leaf Rust Detected'}
+              </Text>
               <View style={styles.matchPill}>
-                <Text style={styles.matchPillText}>92% Match</Text>
+                <Text style={styles.matchPillText}>{displayResult ? `${displayResult.confidence}%` : '92%'} Match</Text>
               </View>
             </View>
             <Text style={styles.alertText}>
-              Fungal disease primarily affecting wheat leaves. Spores spread rapidly in humid conditions.
+              {displayResult 
+                ? (displayResult.disease === 'Healthy' ? 'Your crop looks healthy. Continue monitoring for optimal growth.' : `AI scan detected signs of ${displayResult.disease}.`) 
+                : 'Fungal disease primarily affecting wheat leaves. Spores spread rapidly in humid conditions.'}
             </Text>
-          </View>
-
-          {/* Rec & Treatment Row */}
-          <View style={styles.actionRowContainer}>
-            <View style={styles.actionCard}>
-              <Ionicons name="water-outline" size={20} color="#022E1F" style={styles.actionIcon} />
-              <Text style={styles.actionLabel}>RECOMMENDATION</Text>
-              <Text style={styles.actionValue}>Reduce irrigation</Text>
-            </View>
-            <View style={styles.actionCard}>
-              <MaterialCommunityIcons name="pill" size={20} color="#9a3412" style={styles.actionIcon} />
-              <Text style={styles.actionLabel}>TREATMENT</Text>
-              <Text style={styles.actionValue}>Apply Fungicide</Text>
-            </View>
           </View>
 
           {/* FarmSense Chat Section */}

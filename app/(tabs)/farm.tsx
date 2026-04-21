@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useSensorData, useWeather } from '../../services/database';
+import { useSensorData, useWeather, useIrrigation, updatePumpStatus, useHealthScans } from '../../services/database';
 import { startWeatherAutoRefresh, stopWeatherAutoRefresh } from '../../services/weather';
 import { useAuth } from '../../services/auth';
 
@@ -48,8 +48,11 @@ export default function FarmScreen() {
   };
 
   // --- Firebase Real-Time Data ---
-  const { latest: sensorLatest } = useSensorData();
-  const { current: weatherCurrent } = useWeather();
+  const deviceId = user?.deviceCode || 'user_001';
+  const { latest: sensorLatest } = useSensorData(deviceId);
+  const { current: weatherCurrent, daily } = useWeather();
+  const { data: irrigData } = useIrrigation(deviceId);
+  const { scans } = useHealthScans(deviceId);
 
   // Derive values with fallbacks
   const moisture = sensorLatest?.soilMoisture ?? 45;
@@ -59,6 +62,100 @@ export default function FarmScreen() {
   const windSpeed = weatherCurrent?.windSpeed ?? 12;
   const weatherIcon = weatherCurrent?.icon ?? 'weather-partly-cloudy';
   const city = weatherCurrent?.city ?? 'Punjab';
+
+  // --- Dynamic Recommendations Logic ---
+  const getRecommendations = () => {
+    const recs = [];
+    const threshold = irrigData?.threshold ?? 30;
+
+    // 1. Irrigation recommendation
+    if (moisture < threshold && irrigData?.pumpStatus === 'OFF') {
+      recs.push({
+        id: 'irrigation',
+        title: 'Irrigation Recommended',
+        desc: `Soil moisture (${moisture}%) is below your ${threshold}% threshold.`,
+        icon: 'water',
+        iconType: 'Ionicons',
+        color: '#0284c7',
+        bgColor: '#bae6fd',
+        action: () => router.push('/irrigation')
+      });
+    }
+
+    // 2. Weather/Rain alert
+    const rainToday = daily?.[0]?.pRain ?? 0;
+    if (rainToday > 50) {
+      recs.push({
+        id: 'rain',
+        title: 'Rain Expected Today',
+        desc: `High probability of rain (${rainToday}%). You might want to skip irrigation.`,
+        icon: 'weather-pouring',
+        iconType: 'MaterialCommunityIcons',
+        color: '#1e40af',
+        bgColor: '#dbeafe',
+        action: () => router.push('/weather')
+      });
+    } else if (condition.toLowerCase().includes('rain')) {
+      recs.push({
+        id: 'rain-now',
+        title: 'Raining Now',
+        desc: 'It is currently raining. Ensure your equipment is protected.',
+        icon: 'weather-rainy',
+        iconType: 'MaterialCommunityIcons',
+        color: '#1e40af',
+        bgColor: '#dbeafe',
+        action: () => router.push('/weather')
+      });
+    }
+
+    // 3. Heat stress
+    if (temperature > 38) {
+      recs.push({
+        id: 'heat',
+        title: 'High Heat Warning',
+        desc: `Temperature is ${temperature}°C. Increased evaporation risk for crops.`,
+        icon: 'thermometer',
+        iconType: 'Ionicons',
+        color: '#b91c1c',
+        bgColor: '#fee2e2',
+        action: () => router.push('/weather')
+      });
+    }
+
+    // 4. Crop Health
+    const lastScan = scans?.[0];
+    const daysSinceScan = lastScan ? (Date.now() - lastScan.timestamp) / 86400000 : 10;
+    if (daysSinceScan > 3) {
+      recs.push({
+        id: 'health',
+        title: 'Crop Health Check',
+        desc: 'It’s been over 3 days since your last health scan. Consider a new scan.',
+        icon: 'scan',
+        iconType: 'Ionicons',
+        color: '#166534',
+        bgColor: '#dcfce7',
+        action: () => router.push('/ai')
+      });
+    }
+
+    // Fallback if no specific recommendations
+    if (recs.length === 0) {
+      recs.push({
+        id: 'status-ok',
+        title: 'All Systems Optimal',
+        desc: 'Your farm is looking great! No urgent actions needed at the moment.',
+        icon: 'checkmark-circle',
+        iconType: 'Ionicons',
+        color: '#059669',
+        bgColor: '#ecfdf5',
+        action: () => {}
+      });
+    }
+
+    return recs;
+  };
+
+  const recommendations = getRecommendations();
 
   return (
     <View style={styles.container}>
@@ -152,43 +249,71 @@ export default function FarmScreen() {
           <Text style={styles.sectionTitle}>Quick Insights</Text>
           <View style={styles.insightsGrid}>
             <View style={styles.insightCard}>
-              <View style={[styles.insightIconWrapper, { backgroundColor: '#e0f2fe' }]}>
-                <MaterialCommunityIcons name="sprout" size={20} color="#0284c7" />
+              <View style={[styles.insightIconWrapper, { backgroundColor: moisture < (irrigData?.threshold ?? 30) ? '#fee2e2' : '#e0f2fe' }]}>
+                <MaterialCommunityIcons 
+                  name="sprout" 
+                  size={20} 
+                  color={moisture < (irrigData?.threshold ?? 30) ? '#b91c1c' : '#0284c7'} 
+                />
               </View>
               <Text style={styles.insightLabel}>SOIL STATUS</Text>
-              <Text style={styles.insightValue}>Optimal</Text>
+              <Text style={styles.insightValue}>
+                {moisture < (irrigData?.threshold ?? 30) ? 'Dry' : moisture > 80 ? 'Wet' : 'Optimal'}
+              </Text>
             </View>
             <View style={styles.insightCard}>
               <View style={[styles.insightIconWrapper, { backgroundColor: '#dcfce7' }]}>
                 <MaterialCommunityIcons name="water-pump" size={20} color="#166534" />
               </View>
               <Text style={styles.insightLabel}>WATER USAGE</Text>
-              <Text style={styles.insightValue}>240 L</Text>
+              <Text style={styles.insightValue}>
+                {irrigData?.lastWatered ? '32' : '0'} L
+              </Text>
             </View>
             <View style={styles.insightCard}>
               <View style={[styles.insightIconWrapper, { backgroundColor: '#ffedd5' }]}>
                 <MaterialCommunityIcons name="leaf" size={20} color="#9a3412" />
               </View>
               <Text style={styles.insightLabel}>CROP HEALTH</Text>
-              <Text style={styles.insightValue}>Good</Text>
+              <Text style={styles.insightValue}>
+                {scans?.[0]?.diseaseName === 'Healthy' ? 'Healthy' : scans?.[0]?.diseaseName || 'Not Scanned'}
+              </Text>
             </View>
             <View style={styles.insightCard}>
-              <View style={[styles.insightIconWrapper, { backgroundColor: '#fee2e2' }]}>
-                <MaterialCommunityIcons name="alert-outline" size={20} color="#b91c1c" />
+              <View style={[styles.insightIconWrapper, { backgroundColor: (temperature > 35 || moisture < 20) ? '#fee2e2' : '#dcfce7' }]}>
+                <MaterialCommunityIcons 
+                  name="alert-outline" 
+                  size={20} 
+                  color={(temperature > 35 || moisture < 20) ? '#b91c1c' : '#166534'} 
+                />
               </View>
               <Text style={styles.insightLabel}>RISK LEVEL</Text>
-              <Text style={styles.insightValue}>Low</Text>
+              <Text style={styles.insightValue}>
+                {(temperature > 40 || moisture < 15) ? 'High' : (temperature > 35 || moisture < 25) ? 'Moderate' : 'Low'}
+              </Text>
             </View>
           </View>
         </View>
 
         {/* Action Buttons */}
         <View style={styles.actionButtonsContainer}>
-          <TouchableOpacity style={styles.startIrrigationBtn}>
-            <Ionicons name="play-circle-outline" size={20} color="#fff" />
-            <Text style={styles.startIrrigationText}>Start{'\n'}Irrigation</Text>
+          <TouchableOpacity 
+            style={[styles.startIrrigationBtn, irrigData?.pumpStatus === 'ON' && { backgroundColor: '#10b981' }]}
+            onPress={async () => {
+              await updatePumpStatus(deviceId, irrigData?.pumpStatus === 'ON' ? 'OFF' : 'ON');
+            }}
+          >
+            <Ionicons name={irrigData?.pumpStatus === 'ON' ? "pause-circle-outline" : "play-circle-outline"} size={20} color="#fff" />
+            <Text style={styles.startIrrigationText}>
+              {irrigData?.pumpStatus === 'ON' ? 'Running...' : 'Start\nIrrigation'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.stopBtn}>
+          <TouchableOpacity 
+            style={styles.stopBtn}
+            onPress={async () => {
+              await updatePumpStatus(deviceId, 'OFF');
+            }}
+          >
             <Ionicons name="stop-circle-outline" size={20} color="#1f2937" />
             <Text style={styles.stopText}>Stop</Text>
           </TouchableOpacity>
@@ -196,7 +321,7 @@ export default function FarmScreen() {
 
         {/* Scan Actions */}
         <View style={styles.scanActionsContainer}>
-          <TouchableOpacity style={styles.scanBtn}>
+          <TouchableOpacity style={styles.scanBtn} onPress={() => router.push('/ai')}>
             <MaterialCommunityIcons name="line-scan" size={20} color="#0369a1" />
             <Text style={styles.scanBtnText}>Scan Crop Disease</Text>
           </TouchableOpacity>
@@ -206,25 +331,27 @@ export default function FarmScreen() {
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Recommendations</Text>
           
-          <View style={styles.recommendationCard}>
-            <View style={[styles.recIconWrapper, { backgroundColor: '#bae6fd' }]}>
-              <Ionicons name="water" size={24} color="#0284c7" />
-            </View>
-            <View style={styles.recTextContainer}>
-              <Text style={styles.recTitle}>Irrigation Recommended Today</Text>
-              <Text style={styles.recDesc}>Soil moisture is dropping below optimal levels. Consider a 30-minute cycle.</Text>
-            </View>
-          </View>
-
-          <View style={styles.recommendationCard}>
-            <View style={[styles.recIconWrapper, { backgroundColor: '#f5ebe0' }]}>
-              <MaterialCommunityIcons name="weather-pouring" size={24} color="#5c4033" />
-            </View>
-            <View style={styles.recTextContainer}>
-              <Text style={styles.recTitle}>Rain Expected Tomorrow</Text>
-              <Text style={styles.recDesc}>Heavy rainfall predicted. Avoid spraying fertilizers or pesticides.</Text>
-            </View>
-          </View>
+          {recommendations.map((rec) => (
+            <TouchableOpacity 
+              key={rec.id} 
+              style={styles.recommendationCard}
+              onPress={rec.action}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.recIconWrapper, { backgroundColor: rec.bgColor }]}>
+                {rec.iconType === 'Ionicons' ? (
+                  <Ionicons name={rec.icon as any} size={24} color={rec.color} />
+                ) : (
+                  <MaterialCommunityIcons name={rec.icon as any} size={24} color={rec.color} />
+                )}
+              </View>
+              <View style={styles.recTextContainer}>
+                <Text style={styles.recTitle}>{rec.title}</Text>
+                <Text style={styles.recDesc}>{rec.desc}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Bottom padding for tab bar */}

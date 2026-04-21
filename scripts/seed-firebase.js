@@ -7,7 +7,7 @@ async function seedData() {
   const now = Date.now();
   const userId = 'user_001';
 
-  // 1. User profile
+  // 1. User profile (paired with device 1234)
   await putData(`users/${userId}`, {
     name: 'Gurpreet Singh',
     email: 'gurpreet@farm.com',
@@ -17,31 +17,45 @@ async function seedData() {
     primaryCrops: 'Wheat, Rice',
     phoneNumber: '+91 98765 43210',
     avatarUri: 'https://www.w3schools.com/howto/img_avatar.png',
+    deviceCode: '1234',
   });
 
-  // 2. Latest sensor data
-  await putData(`sensorData/${userId}/latest`, {
+  // 1b. Device Registration
+  await putData('devices/1234', {
+    deviceCode: '1234',
+    status: 'online',
+    lastSeen: now,
+    registeredAt: now,
+    ip: '192.168.1.100',
+  });
+
+  // 2. Latest sensor data (for both user_001 and device 1234)
+  const sensorLatest = {
     soilMoisture: 45,
     temperature: 28,
     humidity: 65,
     timestamp: now,
-  });
+  };
+  await putData(`sensorData/${userId}/latest`, sensorLatest);
+  await putData('sensorData/1234/latest', sensorLatest);
 
-  // 3. Sensor history (7 days)
+  // 3. Sensor history
   const moistureValues = [45, 52, 48, 68, 55, 75, 62];
   const tempValues = [26, 28, 27, 30, 29, 31, 28];
   const humidityValues = [60, 65, 58, 70, 62, 68, 65];
   for (let i = 0; i < 7; i++) {
-    await postData(`sensorData/${userId}/history`, {
+    const entry = {
       soilMoisture: moistureValues[i],
       temperature: tempValues[i],
       humidity: humidityValues[i],
       timestamp: now - (6 - i) * 86400000,
-    });
+    };
+    await postData(`sensorData/${userId}/history`, entry);
+    await postData('sensorData/1234/history', entry);
   }
 
   // 4. Irrigation
-  await putData(`irrigation/${userId}`, {
+  const irrigationData = {
     pumpStatus: 'ON',
     mode: 'AUTO',
     threshold: 30,
@@ -50,7 +64,9 @@ async function seedData() {
       day1: 3.5, day2: 4.8, day3: 2.5, day4: 5.2,
       day5: 4.0, day6: 2.0, day7: 6.5,
     },
-  });
+  };
+  await putData(`irrigation/${userId}`, irrigationData);
+  await putData('irrigation/1234', irrigationData);
 
   // 5. Weather (demo)
   await putData('weather/current', {

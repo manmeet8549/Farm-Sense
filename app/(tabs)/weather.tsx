@@ -17,7 +17,8 @@ export default function WeatherScreen() {
 
   // --- Firebase Real-Time Weather ---
   const { current: weatherCurrent, daily: weatherDaily, hourly: weatherHourly, loading: weatherLoading } = useWeather();
-  const { latest: sensorLatest } = useSensorData();
+  const deviceId = user?.deviceCode || 'user_001';
+  const { latest: sensorLatest } = useSensorData(deviceId);
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [aiAdvisory, setAiAdvisory] = useState<string>('Analyzing real-time data for smart recommendations...');
